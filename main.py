@@ -1,65 +1,178 @@
-from fastapi import FastAPI
-from kubernetes import client, config
-import uuid, time
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+import boto3
+import time
+from typing import Dict, Tuple
 
 app = FastAPI()
 
-# Cargar configuración de Kubernetes
-config.load_incluster_config()  # Usar load_kube_config() si es local
-v1 = client.CoreV1Api()
+# Configuración ECS
+CLUSTER_NAME = "rosblocks-cluster"
+TASK_DEFINITION = "rosblocks-task:3"
+SUBNETS = ["subnet-09bbc9dcb45a51006"]
+SECURITY_GROUPS = ["sg-0d31051e839c56bec"]
+REGION = "us-east-1"
 
-# Diccionario para manejar sesiones activas (simulación de base de datos)
-sessions = {}  # { session_id: {"pod_name": "", "timestamp": 0} }
-SESSION_TIMEOUT = 1800  # 30 minutos en segundos
+# Diccionario en memoria: IP → (taskArn, public_ip)
+user_tasks: Dict[str, Tuple[str, str]] = {}
 
-def create_pod(session_id: str):
-    """Crea un nuevo pod en Kubernetes para un usuario específico"""
-    pod_name = f"rosblocks-{session_id}"
+ecs_client = boto3.client("ecs", region_name=REGION)
+ec2_client = boto3.client("ec2", region_name=REGION)
 
-    pod_manifest = {
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {"name": pod_name},
-        "spec": {
-            "containers": [{
-                "name": "rosblocks-runtime",
-                "image": "juanandresc/rosblocks:latest",  # Imagen de ROSBlocks
-                "ports": [{"containerPort": 8000}]
-            }]
+def get_public_ip_from_task(task_arn: str) -> str:
+    """Obtiene la IP pública asociada a una tarea ECS"""
+    try:
+        # Obtener detalles de la tarea
+        task_desc = ecs_client.describe_tasks(
+            cluster=CLUSTER_NAME,
+            tasks=[task_arn]
+        )
+        
+        # Obtener ENI ID
+        eni_id = task_desc['tasks'][0]['attachments'][0]['details'][1]['value']
+        
+        # Obtener información de la interfaz de red
+        eni_info = ec2_client.describe_network_interfaces(
+            NetworkInterfaceIds=[eni_id]
+        )
+        
+        return eni_info['NetworkInterfaces'][0]['Association']['PublicIp']
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo IP pública: {str(e)}"
+        )
+
+@app.post("/api/get_ip")
+async def get_ip(request: Request):
+    ip = request.client.host
+
+    if ip in user_tasks:
+        task_arn, public_ip = user_tasks[ip]
+        return {
+            "message": "Ya existe una tarea para esta IP",
+            "ip": ip,
+            "taskArn": task_arn,
+            "publicIp": public_ip
         }
-    }
 
-    v1.create_namespaced_pod(namespace="default", body=pod_manifest)
-    sessions[session_id] = {"pod_name": pod_name, "timestamp": time.time()}
-    return pod_name
+    try:
+        # Lanzar nueva tarea
+        response = ecs_client.run_task(
+            cluster=CLUSTER_NAME,
+            launchType="FARGATE",
+            taskDefinition=TASK_DEFINITION,
+            count=1,
+            platformVersion="LATEST",
+            networkConfiguration={
+                "awsvpcConfiguration": {
+                    "subnets": SUBNETS,
+                    "securityGroups": SECURITY_GROUPS,
+                    "assignPublicIp": "ENABLED"
+                }
+            }
+        )
 
-def delete_pod(session_id: str):
-    """Elimina el pod de un usuario si ha estado inactivo demasiado tiempo"""
-    if session_id in sessions:
-        pod_name = sessions[session_id]["pod_name"]
-        v1.delete_namespaced_pod(name=pod_name, namespace="default")
-        del sessions[session_id]
+        task_arn = response["tasks"][0]["taskArn"]
+        
+        # Esperar a que la tarea esté running y obtener su IP
+        max_retries = 10
+        public_ip = None
+        
+        for _ in range(max_retries):
+            try:
+                public_ip = get_public_ip_from_task(task_arn)
+                break
+            except:
+                time.sleep(3)
+                continue
+        
+        if not public_ip:
+            raise HTTPException(
+                status_code=500,
+                detail="No se pudo obtener la IP pública después de varios intentos"
+            )
 
-@app.get("/get-user-pod/{session_id}")
-def get_user_pod(session_id: str):
-    """Verifica si el usuario ya tiene un pod o le asigna uno nuevo"""
-    current_time = time.time()
+        # Guardar en el diccionario
+        user_tasks[ip] = (task_arn, public_ip)
 
-    if session_id in sessions:
-        if current_time - sessions[session_id]["timestamp"] < SESSION_TIMEOUT:
-            pod_name = sessions[session_id]["pod_name"]
-            pods = v1.list_namespaced_pod(namespace="default", field_selector=f"metadata.name={pod_name}")
-            if pods.items:
-                pod_ip = pods.items[0].status.pod_ip
-                return {"pod_url": f"http://{pod_ip}:8000"}
-        else:
-            delete_pod(session_id)  # Expiró, eliminarlo
+        return {
+            "message": "Tarea lanzada",
+            "ip": ip,
+            "taskArn": task_arn,
+            "publicIp": public_ip
+        }
 
-    pod_name = create_pod(session_id)
-    return {"message": "Pod created", "pod_name": pod_name}
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error lanzando tarea: {str(e)}"
+        )
 
-@app.delete("/delete-user-pod/{session_id}")
-def remove_user_pod(session_id: str):
-    """Elimina el pod de un usuario manualmente"""
-    delete_pod(session_id)
-    return {"message": "Pod deleted"}
+@app.post("/api/stop")
+async def stop_task(request: Request):
+    ip = request.client.host
+
+    if ip not in user_tasks:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay tarea asociada a esta IP"
+        )
+
+    task_arn, public_ip = user_tasks[ip]
+    
+    try:
+        # Detener la tarea
+        ecs_client.stop_task(
+            cluster=CLUSTER_NAME,
+            task=task_arn,
+            reason="Petición del usuario"
+        )
+        
+        # Eliminar del diccionario
+        del user_tasks[ip]
+        
+        return {
+            "message": "Tarea detenida",
+            "ip": ip,
+            "publicIp": public_ip,
+            "taskArn": task_arn
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error deteniendo tarea: {str(e)}"
+        )
+
+@app.get("/api/status")
+async def get_status(request: Request):
+    ip = request.client.host
+    
+    if ip not in user_tasks:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay tarea asociada a esta IP"
+        )
+    
+    task_arn, public_ip = user_tasks[ip]
+    
+    try:
+        task_status = ecs_client.describe_tasks(
+            cluster=CLUSTER_NAME,
+            tasks=[task_arn]
+        )['tasks'][0]['lastStatus']
+        
+        return {
+            "ip": ip,
+            "publicIp": public_ip,
+            "taskArn": task_arn,
+            "status": task_status
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error obteniendo estado: {str(e)}"
+        )
