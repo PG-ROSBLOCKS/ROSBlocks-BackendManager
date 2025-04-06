@@ -1,0 +1,148 @@
+proxy:
+  service:
+    type: LoadBalancer
+
+singleuser:
+  image:
+    name: gcr.io/isis25-03-load-balancer/singleuser-custom
+    tag: latest
+  cmd: null
+  cpu:
+    limit: 1
+    guarantee: 0.5
+  memory:
+    limit: 1G
+    guarantee: 512M
+  storage:
+    capacity: 1Gi
+  nodeSelector:
+    hub.jupyter.org/node-purpose: user
+  extraEnv:
+    # basic notation (for literal values only)
+    DISPLAY: ":0.0"
+    
+  extraTolerations:
+    - key: "hub.jupyter.org/dedicated"
+      operator: "Equal"
+      value: "user"
+      effect: "NoSchedule"
+
+  extraContainers:
+    - name: novnc
+      image: theasp/novnc:latest
+      ports:
+        - containerPort: 8080
+      env:
+        - name: DISPLAY_WIDTH
+          value: "500"
+        - name: DISPLAY_HEIGHT
+          value: "500"
+        - name: RUN_XTERM
+          value: "no"
+        - name: NOVNC_BASE_URL
+          value: "/user/{username}/proxy/novnc/"
+
+  networkPolicy:
+    egress:
+      - to:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: jupyterhub
+                component: singleuser-server
+        ports:
+          - port: 8080
+scheduling:
+  userScheduler:
+    enabled: true
+
+hub:
+  image:
+    name: gcr.io/isis25-03-load-balancer/jupyterhub-custom
+    tag: latest
+
+  services:
+    fastapi:
+      url: http://hub:8181
+      command:
+        - /usr/local/bin/uvicorn
+        - app:app
+        - --port
+        - "8181"
+        - --host
+        - "0.0.0.0"
+        - --app-dir
+        - /usr/src/fastapi
+      oauth_redirect_uri: http://34.67.24.161/services/fastapi/oauth_callback
+      environment:
+        PUBLIC_HOST: http://34.67.24.161
+
+  networkPolicy:
+    ingress:
+      - ports:
+          - port: 8181
+        from:
+          - podSelector:
+              matchLabels:
+                hub.jupyter.org/network-access-hub: "true"
+
+  service:
+    extraPorts:
+      - port: 8181
+        targetPort: 8181
+        name: fastapi
+
+  config:
+    JupyterHub:
+      allow_named_servers: true
+      services:
+        - name: fastapi
+          admin: true
+      load_roles:
+        - name: "service-with-admin-users"
+          services: ["fastapi"]
+          scopes: ["servers", "admin:users"]
+        - name: "user"
+          scopes: ["servers", "self", "access:services"]
+        - name: "admin-role-for-testuser"
+          users: ["test-user"]
+          scopes: ["servers", "admin:users"]
+    KubeSpawner:
+      modify_pod_hook: null  # Esto se sobrescribirá con `extraConfig`
+
+  extraConfig:
+    00-add-novnc-values: |
+      # En lugar de usar variables de entorno que puedan no estar definidas en el hub,
+      # se define una URL relativa que luego se interpretará en el navegador.
+      c.KubeSpawner.environment.setdefault("NOVNC_URL", "/user/{username}/proxy/novnc/")
+
+    20-novnc-proxy-config: |
+      # Registra el servicio noVNC en el proxy de JupyterHub
+      c.ServerProxy.servers.update({
+          'novnc': {
+              'command': [],  # Se asume que el extra container de noVNC ya está corriendo
+              'port': 8080,
+              'absolute_url': True,
+              'timeout': 30,
+              'launcher_entry': {
+                  'title': 'noVNC',
+                  'icon_path': '/usr/share/icons/hicolor/48x48/apps/novnc.png'
+              }
+          }
+      })
+
+    25-novnc-debug: |
+      # Bloque de debug para imprimir los servidores registrados
+      print("Registered proxy servers:", c.ServerProxy.servers)
+
+      
+proxy:
+  chp:
+    networkPolicy:
+      egress:
+        - to:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: jupyterhub
+                  app.kubernetes.io/component: hub
+          ports:
+            - port: 8181

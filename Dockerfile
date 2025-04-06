@@ -1,13 +1,15 @@
-FROM python:3.9
+FROM quay.io/jupyterhub/k8s-hub:3.1.0
 
-WORKDIR /app
+USER root
 
-# Copiar solo los archivos necesarios
-COPY main.py ./
-COPY requirements.txt ./
+# Instala el cliente de Kubernetes
+RUN pip install kubernetes
 
-# Instalar dependencias
-RUN pip install --no-cache-dir -r requirements.txt
-EXPOSE 8000
-# Ejecutar FastAPI con Uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Instalamos 
+RUN pip install jupyter-server-proxy
+
+# Copia tu FastAPI (si lo necesitas)
+COPY ./service-fastapi /usr/src/fastapi
+RUN python3 -m pip install -r /usr/src/fastapi/requirements.txt
+
+USER ${NB_USER}
