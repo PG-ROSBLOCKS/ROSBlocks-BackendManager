@@ -8,7 +8,10 @@ from .security import get_current_user
 import asyncio
 import logging
 from starlette.concurrency import run_in_threadpool
-import docker
+
+# kubernetes imports
+from kubernetes import client, config
+from kubernetes.stream import stream
 
 # APIRouter prefix cannot end in /
 service_prefix = os.getenv("JUPYTERHUB_SERVICE_PREFIX", "").rstrip("/")
@@ -21,9 +24,11 @@ async def get_token(code: str = Form(...)):
     # The only thing we need in this form post is the code
     # Everything else we can hardcode / pull from env
     async with get_client() as client:
-        redirect_uri = (
-            os.environ["PUBLIC_HOST"] + os.environ["JUPYTERHUB_OAUTH_CALLBACK_URL"],
-        )
+        # redirect_uri = (
+        #     os.environ["PUBLIC_HOST"] + os.environ["JUPYTERHUB_OAUTH_CALLBACK_URL"],
+        # )
+        redirect_uri = "http://localhost:4200/oauth-callback"
+        print(redirect_uri)
         data = {
             "client_id": os.environ["JUPYTERHUB_CLIENT_ID"],
             "client_secret": os.environ["JUPYTERHUB_API_TOKEN"],
@@ -165,42 +170,77 @@ async def stop_server(
             # Lanza una excepción con detalles en caso de error
             raise HubApiError(detail=resp.json())
 
-def exec_in_container(container_name: str, command: str):
+@router.post("/exec_in_container")
+async def exec_in_container_endpoint(
+    username: str = Form(...),
+    command: str = Form(...),
+    user: User = Depends(get_current_user)
+):
     """
-    Ejecuta un comando en el contenedor especificado y retorna la salida.
+    Ejecuta un comando en el pod del usuario `jupyter-{username}` en Kubernetes.
+    Se asume que tu JupyterHub crea pods con ese nombre.
     """
-    client = docker.from_env()
+    pod_name = f"jupyter-{username}"
+    namespace = os.getenv("K8S_NAMESPACE", "default")  # ajusta según tu cluster
+
     try:
-        container = client.containers.get(container_name)
-    except docker.errors.NotFound:
-        log.error(f"Contenedor {container_name} no encontrado")
-        raise
+        # Usamos run_in_threadpool para no bloquear el event loop
+        stdout, stderr = await run_in_threadpool(k8s_exec_in_pod, pod_name, namespace, command)
+        return {"stdout": stdout, "stderr": stderr}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    # Ejecuta el comando en el contenedor.
-    # 'exec_run' retorna un objeto con .exit_code y .output.
-    result = container.exec_run(cmd=command, demux=True)
-    stdout, stderr = result.output
-    return stdout.decode() if stdout else "", stderr.decode() if stderr else ""
+### === FUNCIONES AUXILIARES K8S === ###
 
-def create_folder_in_container(container_name: str, folder_path: str):
+def k8s_exec_in_pod(pod_name: str, namespace: str, command: str) -> (str, str):
     """
-    Crea una carpeta en el contenedor especificado.
+    Ejecuta un comando en el pod `pod_name` (namespace `namespace`) y retorna (stdout, stderr).
+    Se asume que el contenedor principal se llama igual que el pod o "notebook".
     """
-    command = f"mkdir -p {folder_path}"
-    stdout, stderr = exec_in_container(container_name, command)
+    # Cargar la configuración de Kubernetes (in-cluster o local)
+    try:
+        config.load_incluster_config()
+    except:
+        config.load_kube_config()
+
+    v1 = client.CoreV1Api()
+    exec_command = ["/bin/sh", "-c", command]
+
+    # La librería `stream` devuelve la salida combinada en un solo string
+    # El 'stderr' aquí no va por separado (a menos que usemos tty y demux).
+    # Para simplificar, retornamos todo como stdout y dejamos stderr vacío.
+    try:
+        resp = stream(
+            func=v1.connect_get_namespaced_pod_exec,
+            name=pod_name,
+            namespace=namespace,
+            command=exec_command,
+            stderr=True,
+            stdin=False,
+            stdout=True,
+            tty=False
+        )
+        return resp, ""  # (stdout, stderr) simplificado
+    except Exception as e:
+        raise e
+
+
+def k8s_create_folder_in_pod(pod_name: str, namespace: str, folder_path: str) -> str:
+    cmd = f"mkdir -p {folder_path}"
+    stdout, stderr = k8s_exec_in_pod(pod_name, namespace, cmd)
     if stderr:
         raise Exception(f"Error creando carpeta: {stderr}")
     return stdout
 
-def create_file_in_container(container_name: str, file_path: str, content: str):
-    """
-    Crea un archivo en el contenedor especificado.
-    """
+
+def k8s_create_file_in_pod(pod_name: str, namespace: str, file_path: str, content: str) -> str:
+    # Ojo con las comillas simples y dobles en el echo
     command = f"echo '{content}' > {file_path}"
-    stdout, stderr = exec_in_container(container_name, command)
+    stdout, stderr = k8s_exec_in_pod(pod_name, namespace, command)
     if stderr:
         raise Exception(f"Error creando archivo: {stderr}")
     return stdout
+
 
 
 #exec example command on a user's single-user server

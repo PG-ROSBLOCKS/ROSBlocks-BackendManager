@@ -72,9 +72,10 @@ hub:
         - "0.0.0.0"
         - --app-dir
         - /usr/src/fastapi
-      oauth_redirect_uri: http://34.67.24.161/services/fastapi/oauth_callback
+      oauth_redirect_uri: http://localhost:4200/oauth-callback
       environment:
-        PUBLIC_HOST: http://34.67.24.161
+        PUBLIC_HOST: http://34.58.80.154
+      admin: true     # así indicas que es admin
 
   networkPolicy:
     ingress:

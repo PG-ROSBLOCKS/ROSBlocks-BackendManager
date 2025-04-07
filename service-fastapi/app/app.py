@@ -1,8 +1,10 @@
 import os
 
 from fastapi import FastAPI
-
+from fastapi.middleware.cors import CORSMiddleware
 from .service import router
+# from . import upload
+
 
 ### When managed by Jupyterhub, the actual endpoints
 ### will be served out prefixed by /services/:name.
@@ -22,4 +24,14 @@ app = FastAPI(
     ### to raise oauth2 redirect uri mismatch errors
     swagger_ui_oauth2_redirect_url=os.environ["JUPYTERHUB_OAUTH_CALLBACK_URL"],
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:4200"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(router)
+# app.include_router(upload.router, prefix="/upload", tags=["Upload"])

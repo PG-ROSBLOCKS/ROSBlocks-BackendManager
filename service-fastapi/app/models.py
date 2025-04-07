@@ -43,3 +43,8 @@ class HubResponse(BaseModel):
 
 class HubApiError(BaseModel):
     detail: HubResponse
+
+class UploadRequest(BaseModel):
+    file_name: str
+    code: str
+    type: str  # Ej.: "pub_sub", "srv", "msg", "server", "client"
