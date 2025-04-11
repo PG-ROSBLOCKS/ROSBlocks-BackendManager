@@ -1,178 +1,121 @@
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-import boto3
-import time
-from typing import Dict, Tuple
+from pydantic import BaseModel
+from typing import Dict, List
 
 app = FastAPI()
 
-# Configuración ECS
-CLUSTER_NAME = "rosblocks-cluster"
-TASK_DEFINITION = "rosblocks-task:3"
-SUBNETS = ["subnet-09bbc9dcb45a51006"]
-SECURITY_GROUPS = ["sg-0d31051e839c56bec"]
-REGION = "us-east-1"
+# IPs predefinidas
+AVAILABLE_IPS = [
+    "3.90.1.1", "3.90.1.2", "3.90.1.3", "3.90.1.4", "3.90.1.5",
+    "3.90.1.6", "3.90.1.7", "3.90.1.8", "3.90.1.9", "3.90.1.10"
+]
 
-# Diccionario en memoria: IP → (taskArn, public_ip)
-user_tasks: Dict[str, Tuple[str, str]] = {}
+# Estados
+ip_pool: List[str] = AVAILABLE_IPS.copy()
+client_assignments: Dict[str, str] = {}  # client_id → assigned_ip
+reverse_assignments: Dict[str, str] = {}  # assigned_ip → client_id
 
-ecs_client = boto3.client("ecs", region_name=REGION)
-ec2_client = boto3.client("ec2", region_name=REGION)
+class ClientRequest(BaseModel):
+    client_id: str
 
-def get_public_ip_from_task(task_arn: str) -> str:
-    """Obtiene la IP pública asociada a una tarea ECS"""
-    try:
-        # Obtener detalles de la tarea
-        task_desc = ecs_client.describe_tasks(
-            cluster=CLUSTER_NAME,
-            tasks=[task_arn]
-        )
-        
-        # Obtener ENI ID
-        eni_id = task_desc['tasks'][0]['attachments'][0]['details'][1]['value']
-        
-        # Obtener información de la interfaz de red
-        eni_info = ec2_client.describe_network_interfaces(
-            NetworkInterfaceIds=[eni_id]
-        )
-        
-        return eni_info['NetworkInterfaces'][0]['Association']['PublicIp']
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo IP pública: {str(e)}"
-        )
+class ReleaseRequest(BaseModel):
+    ip_to_release: str
 
 @app.post("/api/get_ip")
-async def get_ip(request: Request):
-    ip = request.client.host
+async def get_ip(data: ClientRequest):
+    client_id = data.client_id
 
-    if ip in user_tasks:
-        task_arn, public_ip = user_tasks[ip]
+    if client_id in client_assignments:
+        assigned_ip = client_assignments[client_id]
         return {
-            "message": "Ya existe una tarea para esta IP",
-            "ip": ip,
-            "taskArn": task_arn,
-            "publicIp": public_ip
+            "message": "Ya tienes una IP asignada",
+            "clientId": client_id,
+            "assignedIp": assigned_ip
         }
 
-    try:
-        # Lanzar nueva tarea
-        response = ecs_client.run_task(
-            cluster=CLUSTER_NAME,
-            launchType="FARGATE",
-            taskDefinition=TASK_DEFINITION,
-            count=1,
-            platformVersion="LATEST",
-            networkConfiguration={
-                "awsvpcConfiguration": {
-                    "subnets": SUBNETS,
-                    "securityGroups": SECURITY_GROUPS,
-                    "assignPublicIp": "ENABLED"
-                }
-            }
-        )
-
-        task_arn = response["tasks"][0]["taskArn"]
-        
-        # Esperar a que la tarea esté running y obtener su IP
-        max_retries = 10
-        public_ip = None
-        
-        for _ in range(max_retries):
-            try:
-                public_ip = get_public_ip_from_task(task_arn)
-                break
-            except:
-                time.sleep(3)
-                continue
-        
-        if not public_ip:
-            raise HTTPException(
-                status_code=500,
-                detail="No se pudo obtener la IP pública después de varios intentos"
-            )
-
-        # Guardar en el diccionario
-        user_tasks[ip] = (task_arn, public_ip)
-
-        return {
-            "message": "Tarea lanzada",
-            "ip": ip,
-            "taskArn": task_arn,
-            "publicIp": public_ip
-        }
-
-    except HTTPException as he:
-        raise he
-    except Exception as e:
+    if not ip_pool:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error lanzando tarea: {str(e)}"
+            status_code=503,
+            detail="No hay IPs disponibles en este momento"
         )
+
+    assigned_ip = ip_pool.pop(0)
+    client_assignments[client_id] = assigned_ip
+    reverse_assignments[assigned_ip] = client_id
+
+    return {
+        "message": "IP asignada correctamente",
+        "clientId": client_id,
+        "assignedIp": assigned_ip
+    }
 
 @app.post("/api/stop")
-async def stop_task(request: Request):
-    ip = request.client.host
+async def stop_task(data: ClientRequest):
+    client_id = data.client_id
 
-    if ip not in user_tasks:
+    if client_id not in client_assignments:
         raise HTTPException(
             status_code=404,
-            detail="No hay tarea asociada a esta IP"
+            detail="No tienes ninguna IP asignada"
         )
 
-    task_arn, public_ip = user_tasks[ip]
-    
-    try:
-        # Detener la tarea
-        ecs_client.stop_task(
-            cluster=CLUSTER_NAME,
-            task=task_arn,
-            reason="Petición del usuario"
-        )
-        
-        # Eliminar del diccionario
-        del user_tasks[ip]
-        
-        return {
-            "message": "Tarea detenida",
-            "ip": ip,
-            "publicIp": public_ip,
-            "taskArn": task_arn
-        }
-        
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error deteniendo tarea: {str(e)}"
-        )
+    assigned_ip = client_assignments[client_id]
+
+    # Liberar
+    del client_assignments[client_id]
+    del reverse_assignments[assigned_ip]
+    ip_pool.append(assigned_ip)
+
+    return {
+        "message": "IP liberada correctamente",
+        "clientId": client_id,
+        "releasedIp": assigned_ip
+    }
 
 @app.get("/api/status")
-async def get_status(request: Request):
-    ip = request.client.host
-    
-    if ip not in user_tasks:
+async def get_status(client_id: str):
+    if client_id not in client_assignments:
         raise HTTPException(
             status_code=404,
-            detail="No hay tarea asociada a esta IP"
+            detail="No tienes ninguna IP asignada"
         )
-    
-    task_arn, public_ip = user_tasks[ip]
-    
-    try:
-        task_status = ecs_client.describe_tasks(
-            cluster=CLUSTER_NAME,
-            tasks=[task_arn]
-        )['tasks'][0]['lastStatus']
-        
-        return {
-            "ip": ip,
-            "publicIp": public_ip,
-            "taskArn": task_arn,
-            "status": task_status
-        }
-    except Exception as e:
+
+    assigned_ip = client_assignments[client_id]
+    return {
+        "clientId": client_id,
+        "assignedIp": assigned_ip,
+        "status": "asignada"
+    }
+
+@app.get("/api/pool_status")
+async def pool_status():
+    return {
+        "total": len(AVAILABLE_IPS),
+        "disponibles": len(ip_pool),
+        "asignadas": len(client_assignments),
+        "detalles": client_assignments
+    }
+
+@app.post("/api/release_ip")
+async def release_ip(data: ReleaseRequest, request: Request):
+    ip_to_release = data.ip_to_release
+    requester_ip = request.client.host
+
+    if ip_to_release not in reverse_assignments:
         raise HTTPException(
-            status_code=500,
-            detail=f"Error obteniendo estado: {str(e)}"
+            status_code=404,
+            detail="La IP no está actualmente asignada"
         )
+
+    client_id = reverse_assignments[ip_to_release]
+
+    # Liberar
+    del client_assignments[client_id]
+    del reverse_assignments[ip_to_release]
+    ip_pool.append(ip_to_release)
+
+    return {
+        "message": "IP liberada por timeout",
+        "releasedIp": ip_to_release,
+        "clientId": client_id
+    }
