@@ -22,6 +22,6 @@ jobs:
           SOURCE:          "fastapi-backend/"                # carpeta local
           TARGET:          ${{ secrets.DEPLOY_TARGET }}  # ej. /home/ubuntu/fastapi-backend
           SCRIPT_AFTER: |
-              cd ${{ secrets.DEPLOY_TARGET }}
+              cd /home/ubuntu/fastapi-backend
               chmod +x ./setup.sh
               ./setup.sh
