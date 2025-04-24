@@ -23,7 +23,7 @@ jobs:
           TARGET:          ${{ secrets.DEPLOY_TARGET }}  # ej. /home/ubuntu/fastapi-backend
       # después del paso ssh-deploy
       - name: Run setup.sh on EC2
-        uses: easingthemes/ssh-deploy@v2.1.4
+        uses: appleboy/ssh-action@v0.1.7
         with:
           host:       ${{ secrets.DEPLOY_HOST }}
           username:   ${{ secrets.DEPLOY_USER }}
