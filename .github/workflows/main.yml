@@ -33,3 +33,4 @@ jobs:
             cd /home/ubuntu/fastapi-backend
             chmod +x ./setup.sh
             ./setup.sh
+            sudo systemctl restart fastapi
