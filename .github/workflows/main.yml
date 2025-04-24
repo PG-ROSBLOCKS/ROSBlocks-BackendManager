@@ -21,7 +21,15 @@ jobs:
           REMOTE_PORT:     ${{ secrets.DEPLOY_PORT }}
           SOURCE:          "fastapi-backend/"                # carpeta local
           TARGET:          ${{ secrets.DEPLOY_TARGET }}  # ej. /home/ubuntu/fastapi-backend
-          SCRIPT_AFTER: |
-              cd /home/ubuntu/fastapi-backend
-              chmod +x ./setup.sh
-              ./setup.sh
+      # después del paso ssh-deploy
+      - name: Run setup.sh on EC2
+        uses: easingthemes/ssh-deploy@v2.1.4
+        with:
+          host:       ${{ secrets.DEPLOY_HOST }}
+          username:   ${{ secrets.DEPLOY_USER }}
+          key:        ${{ secrets.DEPLOY_KEY }}
+          port:       ${{ secrets.DEPLOY_PORT }}
+          script: |
+            cd /home/ubuntu/fastapi-backend
+            chmod +x ./setup.sh
+            ./setup.sh
