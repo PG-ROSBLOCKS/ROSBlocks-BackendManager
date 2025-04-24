@@ -21,3 +21,7 @@ jobs:
           REMOTE_PORT:     ${{ secrets.DEPLOY_PORT }}
           SOURCE:          "fastapi-backend/"                # carpeta local
           TARGET:          ${{ secrets.DEPLOY_TARGET }}  # ej. /home/ubuntu/fastapi-backend
+          SCRIPT_AFTER: |
+              cd ${{ secrets.DEPLOY_TARGET_BACKEND }}
+              chmod +x ./setup.sh
+              ./setup.sh
