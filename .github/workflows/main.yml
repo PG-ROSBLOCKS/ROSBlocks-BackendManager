@@ -20,4 +20,4 @@ jobs:
           REMOTE_USER:     ${{ secrets.DEPLOY_USER }}
           REMOTE_PORT:     ${{ secrets.DEPLOY_PORT }}
           SOURCE:          "fastapi-backend/"                # carpeta local
-          TARGET:          ${{ secrets.DEPLOY_TARGET_BACKEND }}  # ej. /home/ubuntu/fastapi-backend
+          TARGET:          ${{ secrets.DEPLOY_TARGET }}  # ej. /home/ubuntu/fastapi-backend
