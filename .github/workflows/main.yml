@@ -1,0 +1,23 @@
+name: Deploy FastAPI backend
+
+on:
+  push:
+    branches: [ main ]   # dispara el flujo solo en push a main
+
+jobs:
+  deploy-fastapi:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Clonar el repositorio
+      - uses: actions/checkout@v3
+
+      # 2. Copiar la carpeta fastapi-backend/ al servidor
+      - name: Transfer fastapi-backend to EC2
+        uses: easingthemes/ssh-deploy@v2.1.4
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_KEY }}
+          REMOTE_HOST:     ${{ secrets.DEPLOY_HOST }}
+          REMOTE_USER:     ${{ secrets.DEPLOY_USER }}
+          REMOTE_PORT:     ${{ secrets.DEPLOY_PORT }}
+          SOURCE:          "fastapi-backend/"                # carpeta local
+          TARGET:          ${{ secrets.DEPLOY_TARGET_BACKEND }}  # ej. /home/ubuntu/fastapi-backend
