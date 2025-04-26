@@ -5,6 +5,7 @@ After=network.target
 [Service]
 User=ubuntu
 WorkingDirectory=/home/ubuntu/fastapi-backend
+Environment="PATH=/home/ubuntu/fastapi-backend/venv/bin"
 ExecStart=/home/ubuntu/fastapi-backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
 Restart=always
 
