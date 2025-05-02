@@ -123,4 +123,5 @@ def regenerate_mapping(sessions: Dict[str, str]):
         f.writelines(lines)
     print(f"Updated mapping file: {mapping_file}")
 
-    os.system("nginx -s reload")
+    os.system("/usr/sbin/nginx -s reload")
+
