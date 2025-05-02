@@ -84,7 +84,7 @@ def launch_task() -> str:
             "awsvpcConfiguration": {
                 "subnets": SUBNETS,
                 "securityGroups": SECURITY_GROUPS,
-                "assignPublicIp": "ENABLED"
+                "assignPublicIp": "DISABLED"
             }
         }
     )
@@ -123,6 +123,6 @@ def regenerate_mapping(sessions: Dict[str, str]):
         f.writelines(lines)
     print(f"Updated mapping file: {mapping_file}")
 
-    os.system("sudo /usr/local/bin/reload-nginx.sh")
+    os.system("nginx -s reload")
 
 
