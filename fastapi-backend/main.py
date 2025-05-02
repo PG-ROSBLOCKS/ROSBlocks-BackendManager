@@ -103,11 +103,18 @@ def get_task_status(task_arn: str) -> dict:
 
 def regenerate_mapping(sessions: Dict[str, str]):
     mapping_file = "/etc/nginx/mappings/user_sessions.map"
+    os.makedirs(os.path.dirname(mapping_file), exist_ok=True)
+
+    lines = ["map $uuid $backend_ip {\n", "    default 127.0.0.1;\n"]
+    
+    for uuid, task_arn in sessions.items():
+        task_info = get_task_status(task_arn)
+        ip = task_info.get("ip", "127.0.0.1")
+        lines.append(f'    "{uuid}" {ip};\n')
+    
+    lines.append("}\n")
+
     with open(mapping_file, "w") as f:
-        f.write("map $uuid $backend_ip {\n")
-        f.write("    default 127.0.0.1;\n")
-        for uuid, task_arn in sessions.items():
-            ip = get_task_status(task_arn).get("ip", "127.0.0.1")
-            f.write(f'    "{uuid}" {ip};\n')
-        f.write("}\n")
+        f.writelines(lines)
+
     os.system("nginx -s reload")
