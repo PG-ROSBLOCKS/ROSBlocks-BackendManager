@@ -43,6 +43,7 @@ def get_ip(uuid: str):
     else:
         task_arn = launch_task()
         sessions[uuid] = task_arn
+        print(f"Task launched with ARN: {task_arn}")
         regenerate_mapping(sessions)
         return {"status": "starting"}
 
@@ -120,5 +121,6 @@ def regenerate_mapping(sessions: Dict[str, str]):
 
     with open(mapping_file, "w") as f:
         f.writelines(lines)
+    print(f"Updated mapping file: {mapping_file}")
 
     os.system("nginx -s reload")
