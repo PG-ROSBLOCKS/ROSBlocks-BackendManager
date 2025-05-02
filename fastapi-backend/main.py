@@ -84,7 +84,7 @@ def launch_task() -> str:
             "awsvpcConfiguration": {
                 "subnets": SUBNETS,
                 "securityGroups": SECURITY_GROUPS,
-                "assignPublicIp": "DISABLED"
+                "assignPublicIp": "ENABLED"
             }
         }
     )
