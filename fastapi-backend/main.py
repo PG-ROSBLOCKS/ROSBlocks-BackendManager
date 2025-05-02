@@ -37,6 +37,7 @@ def get_ip(uuid: str):
         task_arn = sessions[uuid]
         task_info = get_task_status(task_arn)
         if task_info["status"] == "RUNNING":
+            regenerate_mapping(sessions)
             return {"status": "ready", "path": f"/session/{uuid}/"}
         else:
             return {"status": "starting"}
@@ -103,7 +104,6 @@ def get_task_status(task_arn: str) -> dict:
     )
     eni_data = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
     ip = eni_data["NetworkInterfaces"][0]["PrivateIpAddress"]
-    regenerate_mapping(sessions)
     return {"status": "RUNNING", "ip": ip}
 
 def regenerate_mapping(sessions: Dict[str, str]):
