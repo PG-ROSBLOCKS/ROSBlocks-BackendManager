@@ -9,11 +9,15 @@ import os
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=[
+    "https://rosblocks.com.co",
+    "https://www.rosblocks.com.co"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 CLUSTER_NAME = "rosblocks-cluster"
 TASK_DEFINITION = "rosblocks-task:4"
