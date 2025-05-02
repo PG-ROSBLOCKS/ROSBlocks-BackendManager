@@ -21,7 +21,7 @@ app.add_middleware(
 
 CLUSTER_NAME = "rosblocks-cluster"
 TASK_DEFINITION = "rosblocks-task:4"
-SUBNETS = ["subnet-0234674c79a11237d"]
+SUBNETS = ["subnet-0b11871fcb08f92c6"]
 SECURITY_GROUPS = ["sg-0ad9016ead45bf057"]
 
 ecs_client = boto3.client("ecs", region_name="us-east-1")
