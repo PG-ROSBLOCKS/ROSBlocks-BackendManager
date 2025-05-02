@@ -44,7 +44,6 @@ def get_ip(uuid: str):
         task_arn = launch_task()
         sessions[uuid] = task_arn
         print(f"Task launched with ARN: {task_arn}")
-        regenerate_mapping(sessions)
         return {"status": "starting"}
 
 class DeleteRequest(BaseModel):
@@ -104,6 +103,7 @@ def get_task_status(task_arn: str) -> dict:
     )
     eni_data = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
     ip = eni_data["NetworkInterfaces"][0]["PrivateIpAddress"]
+    regenerate_mapping(sessions)
     return {"status": "RUNNING", "ip": ip}
 
 def regenerate_mapping(sessions: Dict[str, str]):
