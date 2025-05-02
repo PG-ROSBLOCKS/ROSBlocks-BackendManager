@@ -4,6 +4,7 @@ from typing import Dict
 import boto3
 import time
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 app = FastAPI()
 app.add_middleware(
@@ -22,7 +23,6 @@ SECURITY_GROUPS = ["sg-0ad9016ead45bf057"]
 ecs_client = boto3.client("ecs", region_name="us-east-1")
 ec2_client = boto3.client("ec2", region_name="us-east-1")
 
-# Diccionario en memoria: uuid → taskArn
 sessions: Dict[str, str] = {}
 
 # ------------------------------------------
@@ -33,12 +33,13 @@ def get_ip(uuid: str):
         task_arn = sessions[uuid]
         task_info = get_task_status(task_arn)
         if task_info["status"] == "RUNNING":
-            return {"status": "ready", "ip": task_info["ip"]}
+            return {"status": "ready", "path": f"/session/{uuid}/"}
         else:
             return {"status": "starting"}
     else:
         task_arn = launch_task()
         sessions[uuid] = task_arn
+        regenerate_mapping(sessions)
         return {"status": "starting"}
 
 class DeleteRequest(BaseModel):
@@ -55,6 +56,7 @@ def delete_task(req: DeleteRequest):
 
     if uuid_to_delete:
         del sessions[uuid_to_delete]
+        regenerate_mapping(sessions)
         try:
             ecs_client.stop_task(
                 cluster=CLUSTER_NAME,
@@ -96,6 +98,16 @@ def get_task_status(task_arn: str) -> dict:
         None
     )
     eni_data = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
-    ip = eni_data["NetworkInterfaces"][0]["Association"]["PublicIp"]
-
+    ip = eni_data["NetworkInterfaces"][0]["PrivateIpAddress"]
     return {"status": "RUNNING", "ip": ip}
+
+def regenerate_mapping(sessions: Dict[str, str]):
+    mapping_file = "/etc/nginx/mappings/user_sessions.map"
+    with open(mapping_file, "w") as f:
+        f.write("map $uuid $backend_ip {\n")
+        f.write("    default 127.0.0.1;\n")
+        for uuid, task_arn in sessions.items():
+            ip = get_task_status(task_arn).get("ip", "127.0.0.1")
+            f.write(f'    "{uuid}" {ip};\n')
+        f.write("}\n")
+    os.system("nginx -s reload")

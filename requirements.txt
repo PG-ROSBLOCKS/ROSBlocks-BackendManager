@@ -1,4 +1,0 @@
-fastapi
-uvicorn
-kubernetes
-boto3
