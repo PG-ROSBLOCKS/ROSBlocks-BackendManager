@@ -92,6 +92,9 @@ def launch_task() -> str:
 
 def get_task_status(task_arn: str) -> dict:
     desc = ecs_client.describe_tasks(cluster=CLUSTER_NAME, tasks=[task_arn])
+    if not desc["tasks"]:
+        return {"status": "NOT_FOUND"}
+
     task = desc["tasks"][0]
     last_status = task["lastStatus"]
 
@@ -105,6 +108,7 @@ def get_task_status(task_arn: str) -> dict:
     eni_data = ec2_client.describe_network_interfaces(NetworkInterfaceIds=[eni_id])
     ip = eni_data["NetworkInterfaces"][0]["PrivateIpAddress"]
     return {"status": "RUNNING", "ip": ip}
+
 
 def regenerate_mapping(sessions: Dict[str, str]):
     mapping_file = "/etc/nginx/mappings/user_sessions.map"
