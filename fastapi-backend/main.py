@@ -20,7 +20,7 @@ app.add_middleware(
 
 
 CLUSTER_NAME = "rosblocks-cluster"
-TASK_DEFINITION = "rosblocks-task:4"
+TASK_DEFINITION = "rosblocks-task:5"
 SUBNETS = ["subnet-0b11871fcb08f92c6"]
 SECURITY_GROUPS = ["sg-0ad9016ead45bf057"]
 
